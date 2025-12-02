@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "magnet2torrent"
+version = "0.1.0"
+description = "Convert magnet URIs to torrent files using libtorrent, supporting DHT and proxy."
+authors = [
+    {name = "Philip Orange", email = "git@philiporange.com"},
+]
+license = {text = "CC0 1.0 Universal"}
+readme = "README.md"
+requires-python = ">=3.6"
+dependencies = [
+    "requests",
+    "python-dotenv",
+    # libtorrent is usually a system dependency or provided by specific wheels, 
+    # but we can list it if available on PyPI as 'libtorrent' or 'lbry-libtorrent' etc.
+    # For now we assume it is installed in the environment.
+]
+
+[project.scripts]
+magnet2torrent = "magnet2torrent.cli:main"
