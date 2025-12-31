@@ -8,10 +8,11 @@ def main():
     parser = argparse.ArgumentParser(description="Convert magnet URIs to torrent files using libtorrent.")
     parser.add_argument("magnets", nargs="+", help="Magnet URIs")
     parser.add_argument("--dir", "-o", dest="output_dir", default=config.OUTPUT_DIR, help="Output directory")
-    parser.add_argument("--proxy-host", default=config.PROXY_HOST, help="SOCKS5 proxy hostname")
+    parser.add_argument("--proxy-host", default=config.PROXY_HOST, help="SOCKS5 proxy hostname for peer connections")
     parser.add_argument("--proxy-port", default=config.PROXY_PORT, type=int, help="SOCKS5 proxy port")
     parser.add_argument("--proxy-user", default=config.PROXY_USER, help="SOCKS5 proxy username")
     parser.add_argument("--proxy-pass", default=config.PROXY_PASS, help="SOCKS5 proxy password")
+    parser.add_argument("--http-proxy", default=config.HTTP_PROXY, help="HTTP proxy for cache site requests (e.g., http://host:port)")
     parser.add_argument("--enable-dht", action="store_true", default=config.ENABLE_DHT, help="Enable DHT (cannot be used with proxy)")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress output")
 
@@ -38,7 +39,7 @@ def main():
 
     try:
         for magnet in args.magnets:
-            core.process_magnet(ses, magnet, output_dir, public_trackers, quiet=args.quiet)
+            core.process_magnet(ses, magnet, output_dir, public_trackers, quiet=args.quiet, http_proxy=args.http_proxy)
     except KeyboardInterrupt:
         if not args.quiet:
             print("\nInterrupted by user.")

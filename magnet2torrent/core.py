@@ -5,17 +5,138 @@ Uses libtorrent to connect to the BitTorrent swarm, fetch metadata only (no file
 content), and save the resulting .torrent file. Supports both full magnet URIs
 and naked 40-character hex info hashes.
 
+Before connecting to peers, attempts to quickly fetch the torrent from cache
+sites (itorrents.org, torrage.info, etc.) via HTTP. Cache sites are tried
+sequentially from a JSON config file; failed sites are moved to the end.
+
 Key functions:
+- try_cache_sites(): Attempts fast HTTP download from torrent cache sites
 - get_public_trackers(): Fetches and caches public tracker lists
 - create_session(): Initializes libtorrent with optional proxy/DHT settings
 - process_magnet(): Resolves a magnet/info_hash to a .torrent file
 """
 import os
 import time
+import json
 import requests
 import libtorrent as lt
 import re
+from urllib.parse import urlparse, parse_qs
 from . import config
+
+
+def load_cache_sites():
+    """Load the list of cache site URL templates from JSON file."""
+    try:
+        with open(config.CACHE_SITES_FILE, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def save_cache_sites(sites):
+    """Save the cache site URL templates back to JSON file."""
+    with open(config.CACHE_SITES_FILE, 'w') as f:
+        json.dump(sites, f, indent=4)
+
+
+def extract_info_hash(magnet_uri):
+    """
+    Extract the info hash from a magnet URI or naked info hash.
+    Returns uppercase 40-character hex string.
+    """
+    # Check for naked info hash (40 hex characters)
+    if re.match(r'^[a-fA-F0-9]{40}$', magnet_uri):
+        return magnet_uri.upper()
+
+    # Parse magnet URI
+    parsed = urlparse(magnet_uri)
+    if parsed.scheme != 'magnet':
+        return None
+
+    params = parse_qs(parsed.query)
+    xt_list = params.get('xt', [])
+
+    for xt in xt_list:
+        # Format: urn:btih:<info_hash>
+        if xt.startswith('urn:btih:'):
+            hash_part = xt[9:]  # Remove 'urn:btih:'
+            # Handle base32 encoded hashes (32 chars) vs hex (40 chars)
+            if len(hash_part) == 32:
+                # Base32 encoded, decode to hex
+                import base64
+                try:
+                    decoded = base64.b32decode(hash_part.upper())
+                    return decoded.hex().upper()
+                except Exception:
+                    pass
+            elif len(hash_part) == 40:
+                return hash_part.upper()
+
+    return None
+
+
+def try_cache_sites(info_hash, http_proxy=None, quiet=False):
+    """
+    Attempt to download torrent file from cache sites.
+
+    Tries each site sequentially. If a site fails, it's moved to the end of
+    the list and the updated list is saved. Returns the torrent file content
+    as bytes if successful, None otherwise.
+    """
+    sites = load_cache_sites()
+    if not sites:
+        return None
+
+    proxies = None
+    if http_proxy:
+        proxies = {'http': http_proxy, 'https': http_proxy}
+
+    info_hash_upper = info_hash.upper()
+    info_hash_lower = info_hash.lower()
+
+    failed_sites = []
+
+    for site_template in sites:
+        # Try both upper and lower case since different sites may expect different formats
+        url = site_template.format(info_hash=info_hash_upper)
+
+        if not quiet:
+            print(f"Trying cache site: {urlparse(url).netloc}...")
+
+        try:
+            response = requests.get(url, proxies=proxies, timeout=10, allow_redirects=True)
+
+            # Check if we got a valid torrent file
+            if response.status_code == 200:
+                content = response.content
+                # Basic validation: torrent files start with 'd' (bencoded dict)
+                if content and content[0:1] == b'd':
+                    if not quiet:
+                        print(f"Success! Downloaded from {urlparse(url).netloc}")
+
+                    # Move any failed sites to the end
+                    if failed_sites:
+                        remaining = [s for s in sites if s not in failed_sites]
+                        save_cache_sites(remaining + failed_sites)
+
+                    return content
+
+            # Not found or invalid response, try next
+            failed_sites.append(site_template)
+
+        except requests.RequestException as e:
+            if not quiet:
+                print(f"  Failed: {e}")
+            failed_sites.append(site_template)
+
+    # All sites failed, reorder the list
+    if failed_sites and len(failed_sites) < len(sites):
+        remaining = [s for s in sites if s not in failed_sites]
+        save_cache_sites(remaining + failed_sites)
+
+    return None
+
 
 def get_public_trackers(proxy_enabled=False, quiet=False):
     """
@@ -150,18 +271,58 @@ def create_session(proxy_host=None, proxy_port=None, proxy_user=None, proxy_pass
     return ses
 
 
-def process_magnet(ses, magnet_uri, output_dir, public_trackers, quiet=False):
+def process_magnet(ses, magnet_uri, output_dir, public_trackers, quiet=False, http_proxy=None):
     """
     Resolves a single magnet URI to a .torrent file.
+
+    First attempts to download from torrent cache sites via HTTP (fast path).
+    Falls back to peer-based metadata download if cache sites fail.
+
+    Returns:
+        Path to the saved .torrent file on success, None on failure.
     """
+    # Extract info hash for cache site lookup
+    info_hash = extract_info_hash(magnet_uri)
+
+    if not quiet:
+        print(f"Processing: {magnet_uri[:60]}...")
+
+    # Try cache sites first (fast path)
+    if info_hash:
+        if not quiet:
+            print("Attempting download from cache sites...")
+        torrent_data = try_cache_sites(info_hash, http_proxy=http_proxy, quiet=quiet)
+
+        if torrent_data:
+            # Parse the downloaded torrent to get the name
+            try:
+                torrent_info = lt.torrent_info(lt.bdecode(torrent_data))
+                name = torrent_info.name()
+            except Exception:
+                name = info_hash
+
+            # Sanitize name
+            safe_name = "".join([c for c in name if c.isalpha() or c.isdigit() or c in " ._-"]).strip()
+            if not safe_name:
+                safe_name = info_hash
+
+            filename = f"{safe_name}.torrent"
+            output_path = os.path.join(output_dir, filename)
+
+            if not quiet:
+                print(f"Saving to {output_path}")
+            with open(output_path, "wb") as f:
+                f.write(torrent_data)
+            return output_path
+
+        if not quiet:
+            print("Cache sites failed, falling back to peer download...")
+
     # Check for naked info hash (40 hex characters)
     if re.match(r'^[a-fA-F0-9]{40}$', magnet_uri):
         if not quiet:
             print(f"Detected naked info hash: {magnet_uri}")
         magnet_uri = f"magnet:?xt=urn:btih:{magnet_uri}"
-
-    if not quiet:
-        print(f"Processing magnet: {magnet_uri[:60]}...")
     
     # Add magnet
     # We set upload_mode to True to prevent downloading, 
@@ -193,7 +354,7 @@ def process_magnet(ses, magnet_uri, output_dir, public_trackers, quiet=False):
             if not quiet:
                 print("Timeout waiting for metadata.")
             ses.remove_torrent(handle)
-            return
+            return None
 
         # Print status every 5 seconds
         if not quiet and time.time() - last_update >= 5:
@@ -253,6 +414,8 @@ def process_magnet(ses, magnet_uri, output_dir, public_trackers, quiet=False):
         print(f"Saving to {output_path}")
     with open(output_path, "wb") as f:
         f.write(bencoded_data)
-        
+
     # Cleanup
     ses.remove_torrent(handle)
+
+    return output_path

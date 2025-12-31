@@ -1,6 +1,6 @@
 # magnet2torrent
 
-The `magnet2torrent` project is a command-line utility designed to convert magnet URIs into standard `.torrent` files by fetching the metadata from the BitTorrent swarm using the `libtorrent` library. It supports proxy configuration and automatically augments the tracker list with a curated set of public trackers to improve connectivity.
+The `magnet2torrent` project is a command-line utility designed to convert magnet URIs into standard `.torrent` files. It first attempts to quickly download torrents from cache sites (itorrents.org, torrage.info, etc.) via HTTP. If cache sites don't have the torrent, it falls back to fetching metadata from the BitTorrent swarm using `libtorrent`. It supports proxy configuration and automatically augments the tracker list with a curated set of public trackers to improve connectivity.
 
 ## Configuration Management
 
@@ -17,7 +17,42 @@ from magnet2torrent import config
 # Example of accessing configuration variables
 print(f"Default Output Directory: {config.OUTPUT_DIR}")
 print(f"Is DHT enabled by default? {config.ENABLE_DHT}")
-print(f"Proxy Host: {config.PROXY_HOST}")
+print(f"SOCKS5 Proxy Host: {config.PROXY_HOST}")
+print(f"HTTP Proxy: {config.HTTP_PROXY}")
+print(f"Cache Sites File: {config.CACHE_SITES_FILE}")
+```
+
+## Cache Sites
+
+The tool maintains a list of torrent cache site URLs in `magnet2torrent/cache_sites.json`. Before connecting to peers, it tries to download the torrent from these sites in order. If a site fails, it's moved to the end of the list to prioritize working sites.
+
+### Viewing and Modifying Cache Sites
+
+```python
+from magnet2torrent import core
+
+# Load current cache sites
+sites = core.load_cache_sites()
+print(f"Cache sites: {sites}")
+
+# The list is automatically reordered when sites fail
+# You can also manually modify cache_sites.json
+```
+
+### Trying Cache Sites Directly
+
+```python
+from magnet2torrent import core
+
+info_hash = "8600000000000000000000000000000000000000"
+
+# Try to download from cache sites (returns bytes or None)
+torrent_data = core.try_cache_sites(info_hash, http_proxy="http://proxy:8080")
+
+if torrent_data:
+    print("Downloaded from cache site!")
+else:
+    print("Not found in cache sites, need to use peer download")
 ```
 
 ## Core Functionality
@@ -79,7 +114,9 @@ except ValueError as e:
 
 The `process_magnet` function takes a libtorrent session, a magnet URI (or just an info hash), an output directory, and a list of public trackers. It attempts to resolve the metadata and save the resulting `.torrent` file.
 
--   It first checks if the input is a naked info hash and converts it to a full magnet URI if necessary.
+-   **Fast path**: First attempts to download from cache sites via HTTP (near-instant if available).
+-   **Fallback**: If cache sites fail, falls back to peer-based metadata download.
+-   It checks if the input is a naked info hash and converts it to a full magnet URI if necessary.
 -   It adds the magnet to the session, setting the `upload_mode` flag to prevent actual file downloading (metadata-only).
 -   It augments the magnet's existing trackers with the provided `public_trackers`.
 -   It enters a loop, waiting for the metadata to be received (up to a 5-minute timeout).
@@ -91,29 +128,27 @@ import os
 import tempfile
 from magnet2torrent import core
 
-# Since this function involves network activity and time-sensitive operations,
-# we will demonstrate the setup and expected flow rather than a live execution.
-
 # Setup mock environment
 temp_dir = tempfile.mkdtemp()
-mock_session = lt.session() # Real session for demonstration purposes
+mock_session = lt.session()
 mock_trackers = ["http://tracker.example.com/announce"]
-info_hash = "8600000000000000000000000000000000000000" # Example info hash
+info_hash = "8600000000000000000000000000000000000000"
 
-# Example 1: Processing a naked info hash (requires a live swarm connection to complete)
+# Example 1: Processing with HTTP proxy for cache sites
 # core.process_magnet(
-#     ses=mock_session, 
-#     magnet_uri=info_hash, 
-#     output_dir=temp_dir, 
-#     public_trackers=mock_trackers
+#     ses=mock_session,
+#     magnet_uri=info_hash,
+#     output_dir=temp_dir,
+#     public_trackers=mock_trackers,
+#     http_proxy="http://proxy:8080"  # Optional HTTP proxy for cache site requests
 # )
 
 # Example 2: Processing a full magnet URI
 # magnet_uri = f"magnet:?xt=urn:btih:{info_hash}&dn=TestFile"
 # core.process_magnet(
-#     ses=mock_session, 
-#     magnet_uri=magnet_uri, 
-#     output_dir=temp_dir, 
+#     ses=mock_session,
+#     magnet_uri=magnet_uri,
+#     output_dir=temp_dir,
 #     public_trackers=mock_trackers
 # )
 
@@ -141,6 +176,9 @@ The `main` function parses command-line arguments, validates the output director
 # 2. Specify output directory and enable DHT:
 # magnet2torrent "magnet:?xt=urn:btih:..." --dir /tmp/torrents --enable-dht
 
-# 3. Use a SOCKS5 proxy (disables DHT automatically):
+# 3. Use HTTP proxy for cache site requests:
+# magnet2torrent "magnet:?xt=urn:btih:..." --http-proxy http://127.0.0.1:8080
+
+# 4. Use a SOCKS5 proxy for peer connections (disables DHT automatically):
 # magnet2torrent "magnet:?xt=urn:btih:..." --proxy-host 127.0.0.1 --proxy-port 9050
 ```
