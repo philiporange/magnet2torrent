@@ -1,18 +1,17 @@
 {
   "name": "magnet2torrent",
-  "short_description": "Convert magnet URIs to torrent files by fetching metadata from the BitTorrent swarm.",
-  "long_description": "magnet2torrent is a command-line utility that converts magnet URIs and info hashes into standard .torrent files. It uses libtorrent to connect to the BitTorrent swarm and fetch only the metadata (without downloading file content). The tool supports SOCKS5 proxy configuration for privacy/security and automatically augments tracker lists with public trackers to improve connectivity. It can optionally use DHT for peer discovery and provides caching of public tracker lists to reduce network requests.",
+  "short_description": "Convert magnet URIs to torrent files using libtorrent with DHT and proxy support.",
+  "long_description": "A command-line tool that converts magnet URIs and info hashes to .torrent files by downloading metadata from the BitTorrent swarm without downloading file content. The tool implements a two-stage approach: it first attempts fast HTTP downloads from torrent cache sites (itorrents.org, hash2torrent.com, etc.), then falls back to peer-based metadata retrieval using libtorrent. It supports SOCKS5 proxies for peer connections, HTTP proxies for cache site requests, optional DHT peer discovery, and automatically augments tracker lists with curated public trackers to improve connectivity. Configuration is managed through command-line arguments or environment variables via .env files.",
   "keywords": [
     "bittorrent",
-    "magnet-link",
-    "torrent",
-    "metadata",
+    "magnet-links",
+    "torrent-metadata",
     "libtorrent",
-    "cli-tool",
-    "proxy",
-    "socks5",
     "dht",
-    "tracker",
+    "socks5-proxy",
+    "cli-tool",
+    "metadata-extraction",
+    "tracker-management",
     "file-conversion",
     "peer-discovery"
   ],
@@ -22,44 +21,25 @@
   ],
   "frameworks": [
     "libtorrent",
-    "argparse",
     "requests",
     "python-dotenv"
   ],
   "modules": [
     {
-      "path": "magnet2torrent/cli.py",
-      "description": "Command-line interface entry point that parses arguments and orchestrates the magnet-to-torrent conversion workflow."
+      "path": "magnet2torrent/core.py",
+      "description": "Core functionality for converting magnets to torrents, handling cache site lookups, libtorrent session management, metadata fetching, and tracker management."
     },
     {
-      "path": "magnet2torrent/core.py",
-      "description": "Core functionality for fetching metadata from magnets, managing libtorrent sessions, and generating torrent files."
+      "path": "magnet2torrent/cli.py",
+      "description": "Command-line interface with argument parsing for magnet URIs, proxy configuration, output directory, and DHT/quiet options."
     },
     {
       "path": "magnet2torrent/config.py",
-      "description": "Configuration management module that loads environment variables from .env files and provides default settings."
+      "description": "Configuration management loading environment variables from .env files, setting defaults for proxy, DHT, tracker URLs, and cache directories."
     },
     {
       "path": "magnet2torrent/__init__.py",
-      "description": "Package initialization file that defines the project version."
-    },
-    {
-      "path": "tests/test_core.py",
-      "description": "Unit tests for core module functionality including magnet URI parsing and torrent file generation."
+      "description": "Package initialization defining version number."
     }
-  ],
-  "git": {
-    "is_repo": true,
-    "remote_url": "https://github.com/philiporange/magnet2torrent.git",
-    "github_name": "philiporange/magnet2torrent",
-    "default_branch": "master",
-    "last_commit": "2025-12-02T02:31:10+00:00"
-  },
-  "stats": {
-    "files": 13,
-    "lines_of_code": 383,
-    "size_bytes": 31799
-  },
-  "generated_at": "2025-12-06T23:17:19.529117",
-  "generator_version": "1.0.0"
+  ]
 }
